@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Змейка-Лабиринт</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+            margin: 0;
+            padding: 10px;
+        }
+        canvas {
+            border: 2px solid black;
+            background-color: #ffffff;
+        }
+        #gameInfo {
+            margin-top: 10px;
+            font-size: 18px;
+        }
+        #startButton, #aiHintButton {
+            margin-top: 10px;
+            font-size: 18px;
+            padding: 5px 10px;
+        }
+        #mobileControls {
+            display: none;
+            margin-top: 10px;
+        }
+        #mobileControls button {
+            font-size: 24px;
+            width: 60px;
+            height: 60px;
+            margin: 5px;
+        }
+        select {
+            margin-top: 10px;
+            font-size: 16px;
+        }
+        @media (max-width: 600px) {
+            canvas {
+                width: 90vw;
+                height: 90vw;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="450" height="450"></canvas>
+    <div id="gameInfo">
+        Счет: <span id="score">0</span> | 
+        Рекорд: <span id="highScore">0</span> | 
+        Уровень: <span id="level">1</span> | 
+        Энергия: <span id="energy">100</span>
+    </div>
+    <button id="startButton">Начать игру</button>
+    <button id="aiHintButton">ИИ подсказка</button>
+    <div id="mobileControls">
+        <button id="upButton">↑</button>
+        <div>
+            <button id="leftButton">←</button>
+            <button id="rightButton">→</button>
+        </div>
+        <button id="downButton">↓</button>
+    </div>
+    <select id="difficultySelect">
+        <option value="very_easy">Очень легкий</option>
+        <option value="easy">Легкий</option>
+        <option value="medium" selected>Средний</option>
+        <option value="hard">Сложный</option>
+        <option value="very_hard">Очень сложный</option>
+    </select>
+    <select id="speedSelect">
+        <option value="0.33">x0.33 (Очень медленно)</option>
+        <option value="0.5">x0.5 (Медленно)</option>
+        <option value="0.75">x0.75 (Ниже среднего)</option>
+        <option value="1" selected>x1 (Стандартно)</option>
+        <option value="1.5">x1.5 (Быстро)</option>
+        <option value="2">x2 (Очень быстро)</option>
+    </select>
+
+    <audio id="eatSound" src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA" preload="auto"></audio>
+    <audio id="wallSound" src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAIA" preload="auto"></audio>
+
+    <script>
+	
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreElement = document.getElementById('score');
+const highScoreElement = document.getElementById('highScore');
+const levelElement = document.getElementById('level');
+const energyElement = document.getElementById('energy');
+const startButton = document.getElementById('startButton');
+const aiHintButton = document.getElementById('aiHintButton');
+const eatSound = document.getElementById('eatSound');
+const wallSound = document.getElementById('wallSound');
+const mobileControls = document.getElementById('mobileControls');
+const difficultySelect = document.getElementById('difficultySelect');
+const speedSelect = document.getElementById('speedSelect');
+
+const GRID_SIZE = 15;
+let CELL_SIZE = canvas.width / GRID_SIZE;
+
+let snake, direction, food, score, highScore, level, gameLoop, maze, energy;
+let gameRunning = false;
+let aiHintPath = [];
+let mazeChangeTimer = 0;
+let foodType = 'normal';
+let difficulty = 'medium';
+let speedMultiplier = 1;
+
+let INITIAL_SPEED, ENERGY_DECREASE;
+
+function setDifficulty(level) {
+    switch(level) {
+        case 'very_easy':
+            INITIAL_SPEED = 3;
+            ENERGY_DECREASE = 0.1;
+            break;
+        case 'easy':
+            INITIAL_SPEED = 5;
+            ENERGY_DECREASE = 0.3;
+            break;
+        case 'medium':
+            INITIAL_SPEED = 7;
+            ENERGY_DECREASE = 0.5;
+            break;
+        case 'hard':
+            INITIAL_SPEED = 10;
+            ENERGY_DECREASE = 0.7;
+            break;
+        case 'very_hard':
+            INITIAL_SPEED = 15;
+            ENERGY_DECREASE = 1;
+            break;
+    }
+}
+
+function generateMaze() {
+    let maze = new Array(GRID_SIZE).fill(null).map(() => new Array(GRID_SIZE).fill(0));
+    
+    for (let i = 0; i < GRID_SIZE; i++) {
+        maze[0][i] = maze[GRID_SIZE-1][i] = maze[i][0] = maze[i][GRID_SIZE-1] = 1;
+    }
+    
+    for (let i = 2; i < GRID_SIZE - 2; i += 2) {
+        for (let j = 2; j < GRID_SIZE - 2; j += 2) {
+            if (Math.random() < 0.4 + level * 0.02) {
+                maze[i][j] = 1;
+                let direction = Math.floor(Math.random() * 4);
+                switch(direction) {
+                    case 0: if (i > 1) maze[i-1][j] = 1; break;
+                    case 1: if (i < GRID_SIZE-2) maze[i+1][j] = 1; break;
+                    case 2: if (j > 1) maze[i][j-1] = 1; break;
+                    case 3: if (j < GRID_SIZE-2) maze[i][j+1] = 1; break;
+                }
+            }
+        }
+    }
+    
+    return maze;
+}
+
+function initGame() {
+    maze = generateMaze();
+    do {
+        snake = [{x: Math.floor(Math.random() * GRID_SIZE), y: Math.floor(Math.random() * GRID_SIZE)}];
+    } while (maze[snake[0].y][snake[0].x] === 1);
+    
+    direction = {x: 1, y: 0};
+    generateFood();
+    score = 0;
+    level = 1;
+    energy = 100;
+    highScore = localStorage.getItem('snakeHighScore') || 0;
+    updateScore();
+    updateLevel();
+    updateEnergy();
+    mazeChangeTimer = 0;
+    setDifficulty(difficulty);
+}
+
+function drawMaze() {
+    ctx.fillStyle = 'gray';
+    for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE; x++) {
+            if (maze[y][x] === 1) {
+                ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+            }
+        }
+    }
+}
+
+function drawSnake() {
+    ctx.fillStyle = 'green';
+    snake.forEach(segment => {
+        ctx.fillRect(segment.x * CELL_SIZE, segment.y * CELL_SIZE, CELL_SIZE - 1, CELL_SIZE - 1);
+    });
+}
+
+function drawFood() {
+    switch(foodType) {
+        case 'normal':
+            ctx.fillStyle = 'red';
+            break;
+        case 'energy':
+            ctx.fillStyle = 'yellow';
+            break;
+        case 'speed':
+            ctx.fillStyle = 'blue';
+            break;
+    }
+    ctx.fillRect(food.x * CELL_SIZE, food.y * CELL_SIZE, CELL_SIZE - 1, CELL_SIZE - 1);
+}
+
+function moveSnake() {
+    const head = {
+        x: (snake[0].x + direction.x + GRID_SIZE) % GRID_SIZE,
+        y: (snake[0].y + direction.y + GRID_SIZE) % GRID_SIZE
+    };
+
+    if (maze[head.y][head.x] === 1) {
+        if (energy >= 10) {
+            energy -= 10;
+            maze[head.y][head.x] = 0;
+            updateEnergy();
+            wallSound.play();
+        } else {
+            gameOver();
+            return;
+        }
+    }
+
+    snake.unshift(head);
+
+    if (head.x === food.x && head.y === food.y) {
+        eatFood();
+    } else {
+        snake.pop();
+    }
+
+    energy -= ENERGY_DECREASE;
+    updateEnergy();
+
+    if (energy <= 0) {
+        gameOver();
+    }
+
+    mazeChangeTimer++;
+    if (mazeChangeTimer >= 100) {
+        changeMaze();
+        mazeChangeTimer = 0;
+    }
+}
+
+function eatFood() {
+    eatSound.play();
+    switch(foodType) {
+        case 'normal':
+            score += 10 * level;
+            energy = Math.min(energy + 20, 100);
+            break;
+        case 'energy':
+            energy = 100;
+            break;
+        case 'speed':
+            score += 20 * level;
+            clearInterval(gameLoop);
+            gameLoop = setInterval(update, 1000 / (INITIAL_SPEED * speedMultiplier * 1.5));
+            setTimeout(() => {
+                clearInterval(gameLoop);
+                gameLoop = setInterval(update, 1000 / (INITIAL_SPEED * speedMultiplier));
+            }, 5000);
+            break;
+    }
+    updateScore();
+    updateEnergy();
+    generateFood();
+    if (score % 50 === 0) {
+        level++;
+        updateLevel();
+    }
+}
+
+function generateFood() {
+    do {
+        food = {
+            x: Math.floor(Math.random() * GRID_SIZE),
+            y: Math.floor(Math.random() * GRID_SIZE)
+        };
+    } while (maze[food.y][food.x] === 1 || snake.some(segment => segment.x === food.x && segment.y === food.y));
+    
+    let rand = Math.random();
+    if (rand < 0.7) {
+        foodType = 'normal';
+    } else if (rand < 0.9) {
+        foodType = 'energy';
+    } else {
+        foodType = 'speed';
+    }
+}
+
+function changeMaze() {
+    for (let i = 1; i < GRID_SIZE - 1; i++) {
+        for (let j = 1; j < GRID_SIZE - 1; j++) {
+            if (Math.random() < 0.1 && !snake.some(segment => segment.x === j && segment.y === i) && !(food.x === j && food.y === i)) {
+                maze[i][j] = maze[i][j] === 1 ? 0 : 1;
+            }
+        }
+    }
+}
+
+function updateScore() {
+    scoreElement.textContent = score;
+    if (score > highScore) {
+        highScore = score;
+        highScoreElement.textContent = highScore;
+        localStorage.setItem('snakeHighScore', highScore);
+    }
+}
+
+function updateLevel() {
+    levelElement.textContent = level;
+}
+
+function updateEnergy() {
+    energyElement.textContent = Math.round(energy);
+}
+
+function checkCollision() {
+    const head = snake[0];
+    return snake.slice(1).some(segment => segment.x === head.x && segment.y === head.y);
+}
+
+function gameOver() {
+    clearInterval(gameLoop);
+    gameRunning = false;
+    alert(`Игра окончена! Ваш счет: ${score}`);
+    startButton.disabled = false;
+}
+
+function update() {
+    moveSnake();
+    if (checkCollision()) {
+        gameOver();
+        return;
+    }
+    draw();
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawMaze();
+    drawSnake();
+    drawFood();
+    drawAIHint();
+}
+
+function startGame() {
+    if (gameRunning) return;
+    initGame();
+    gameRunning = true;
+    gameLoop = setInterval(update, 1000 / (INITIAL_SPEED * speedMultiplier));
+    startButton.disabled = true;
+}
+
+function drawAIHint() {
+    if (aiHintPath.length > 0) {
+        ctx.strokeStyle = 'blue';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(aiHintPath[0].x * CELL_SIZE + CELL_SIZE/2, aiHintPath[0].y * CELL_SIZE + CELL_SIZE/2);
+        for (let i = 1; i < aiHintPath.length; i++) {
+            ctx.lineTo(aiHintPath[i].x * CELL_SIZE + CELL_SIZE/2, aiHintPath[i].y * CELL_SIZE + CELL_SIZE/2);
+        }
+        ctx.stroke();
+    }
+}
+
+function getAIHint() {
+    aiHintPath = findPath(snake[0], food);
+    draw();
+}
+
+function findPath(start, goal) {
+    let openSet = [start];
+    let cameFrom = {};
+    let gScore = {};
+    let fScore = {};
+    gScore[`${start.x},${start.y}`] = 0;
+    fScore[`${start.x},${start.y}`] = heuristic(start, goal);
+
+    while (openSet.length > 0) {
+        let current = openSet.reduce((a, b) => fScore[`${a.x},${a.y}`] < fScore[`${b.x},${b.y}`] ? a : b);
+
+        if (current.x === goal.x && current.y === goal.y) {
+            return reconstructPath(cameFrom, current);
+        }
+
+        openSet = openSet.filter(pos => pos !== current);
+
+        for (let neighbor of getNeighbors(current)) {
+            let tentativeGScore = gScore[`${current.x},${current.y}`] + 1;
+
+            if (tentativeGScore < (gScore[`${neighbor.x},${neighbor.y}`] || Infinity)) {
+                cameFrom[`${neighbor.x},${neighbor.y}`] = current;
+                gScore[`${neighbor.x},${neighbor.y}`] = tentativeGScore;
+                fScore[`${neighbor.x},${neighbor.y}`] = gScore[`${neighbor.x},${neighbor.y}`] + heuristic(neighbor, goal);
+
+                if (!openSet.some(pos => pos.x === neighbor.x && pos.y === neighbor.y)) {
+                    openSet.push(neighbor);
+                }
+            }
+        }
+    }
+
+    return null;
+}
+
+function heuristic(a, b) {
+    return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+function getNeighbors(pos) {
+    let neighbors = [
+        {x: pos.x - 1, y: pos.y},
+        {x: pos.x + 1, y: pos.y},
+        {x: pos.x, y: pos.y - 1},
+        {x: pos.x, y: pos.y + 1}
+    ];
+
+    return neighbors.filter(n => 
+        n.x >= 0 && n.x < GRID_SIZE && 
+        n.y >= 0 && n.y < GRID_SIZE &&
+        maze[n.y][n.x] !== 1 &&
+        !snake.some(segment => segment.x === n.x && segment.y === n.y)
+    );
+}
+
+function reconstructPath(cameFrom, current) {
+    let path = [current];
+    while (cameFrom[`${current.x},${current.y}`]) {
+        current = cameFrom[`${current.x},${current.y}`];
+        path.unshift(current);
+    }
+    return path;
+}
+
+function isMobile() {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
+
+function handleMobileControl(dx, dy) {
+    if (gameRunning && (direction.x !== -dx || direction.y !== -dy)) {
+        direction = {x: dx, y: dy};
+    }
+}
+
+function handleSwipe(startX, startY, endX, endY) {
+    let dx = endX - startX;
+    let dy = endY - startY;
+    if (Math.abs(dx) > Math.abs(dy)) {
+        handleMobileControl(dx > 0 ? 1 : -1, 0);
+    } else {
+        handleMobileControl(0, dy > 0 ? 1 : -1);
+    }
+}
+
+document.addEventListener('keydown', (e) => {
+    if (!gameRunning) return;
+    switch(e.key) {
+        case 'ArrowUp': if (direction.y === 0) direction = {x: 0, y: -1}; break;
+        case 'ArrowDown': if (direction.y === 0) direction = {x: 0, y: 1}; break;
+        case 'ArrowLeft': if (direction.x === 0) direction = {x: -1, y: 0}; break;
+        case 'ArrowRight': if (direction.x === 0) direction = {x: 1, y: 0}; break;
+    }
+});
+
+startButton.addEventListener('click', startGame);
+aiHintButton.addEventListener('click', getAIHint);
+
+difficultySelect.addEventListener('change', (e) => {
+    difficulty = e.target.value;
+    setDifficulty(difficulty);
+});
+
+speedSelect.addEventListener('change', (e) => {
+    speedMultiplier = parseFloat(e.target.value);
+    if (gameRunning) {
+        clearInterval(gameLoop);
+        gameLoop = setInterval(update, 1000 / (INITIAL_SPEED * speedMultiplier));
+    }
+});
+
+if (isMobile()) {
+    mobileControls.style.display = 'block';
+    canvas.width = canvas.height = Math.min(window.innerWidth, window.innerHeight) * 0.9;
+    CELL_SIZE = canvas.width / GRID_SIZE;
+
+    document.getElementById('upButton').addEventListener('click', () => handleMobileControl(0, -1));
+    document.getElementById('downButton').addEventListener('click', () => handleMobileControl(0, 1));
+    document.getElementById('leftButton').addEventListener('click', () => handleMobileControl(-1, 0));
+    document.getElementById('rightButton').addEventListener('click', () => handleMobileControl(1, 0));
+
+    let touchStartX = 0;
+    let touchStartY = 0;
+
+    canvas.addEventListener('touchstart', (e) => {
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+    }, false);
+
+    canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+    }, false);
+
+    canvas.addEventListener('touchend', (e) => {
+        let touchEndX = e.changedTouches[0].clientX;
+        let touchEndY = e.changedTouches[0].clientY;
+        handleSwipe(touchStartX, touchStartY, touchEndX, touchEndY);
+    }, false);
+}
+
+initGame();
+draw();
+    </script>
+</body>
+</html>
